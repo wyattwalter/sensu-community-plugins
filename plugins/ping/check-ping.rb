@@ -1,19 +1,17 @@
 #!/usr/bin/env ruby
-# Check-ping
-# ===
 #
-# This is a simple Ping check script for Sensu, Currently works with
-#  ICMP, HTTP and TCP.
+# This is a simple Ping check script for Sensu.
 #
 # Requires "net-ping" gem
 #
 # Examples:
 #
-#   check-ping -h host -t type -p port    => port option is for HTTP ping
+#   check-ping -h host -T timeout [--report]
 #
-#  Default host is "google.com", change to if you dont want to pass host
-# option
+#  Default host is "localhost"
+#
 #  Author Deepak Mohan Dass   <deepakmdass88@gmail.com>
+#
 #
 # Released under the same terms as Sensu (the MIT license); see LICENSE
 # for details.
@@ -24,36 +22,72 @@ require 'net/ping'
 
 class CheckPING < Sensu::Plugin::Check::CLI
 
-  option :port,
-    :short => '-p port',
-    :default => "80"
-
   option :host,
     :short => '-h host',
-    :default => 'google.com'
+    :default => 'localhost'
 
-  option :type,
-    :short => '-t type',
-    :default => 'HTTP'
+  option :timeout,
+    :short => '-T timeout',
+    :proc => Proc.new {|s| s.to_i},
+    :default => '5'
+
+  option :count,
+    :short => '-c count',
+    :description => 'The number of ping requests',
+    :proc => Proc.new {|s| s.to_i },
+    :default => 1
+
+  option :interval,
+    :short => '-i interval',
+    :description => 'The number of seconds to wait between ping requests',
+    :proc => Proc.new {|s| s.to_f },
+    :default => 1
+
+  option :warn_ratio,
+    :short => '-W ratio',
+    :description => 'Warn if successful ratio is under this value',
+    :proc => Proc.new {|s| s.to_f },
+    :default => 0.5
+
+  option :critical_ratio,
+    :short => '-C ratio',
+    :description => 'Critical if successful ratio is under this value',
+    :proc => Proc.new {|s| s.to_f },
+    :default => 0.2
+
+  option :report,
+    :short => '-r',
+    :long => '--report',
+    :description => "Attach MTR report if ping is failed",
+    :default => false
 
   def run
-    pt = nil
-    ping_type = config[:type].upcase
-    case ping_type
-    when 'HTTP'
-      pt = Net::Ping::HTTP.new(config[:host], config[:port], 10)
-    when 'ICMP'
-      pt = Net::Ping::ICMP.new(config[:host], config[:port], 10)
-    when 'TCP'
-      pt = Net::Ping::TCP.new(config[:host], config[:port], 10)
-    else
-      unknown "Unknown type specified: #{config[:type]}"
+    result = []
+    pt = Net::Ping::External.new(config[:host], nil, config[:timeout])
+    config[:count].times do |i|
+      sleep(config[:interval]) unless i == 0
+      result[i] = pt.ping?
     end
-    if pt != nil
-      if pt.ping?
-        ok "#{ping_type} ping successful for host: #{config[:host]}"
+
+    successful_count = result.count(true)
+    total_count = config[:count]
+    success_ratio = successful_count / total_count.to_f
+
+    if success_ratio > config[:warn_ratio]
+      success_message = "ICMP ping successful for host: #{config[:host]}"
+      ok success_message
+    else
+      failure_message = "ICMP ping unsuccessful for host: #{config[:host]} (successful: #{successful_count}/#{total_count})"
+
+      if config[:report]
+        report = `mtr --curses --report-cycles=1 --report --no-dns #{config[:host]}`
+        failure_message = failure_message + "\n" + report
+      end
+
+      if success_ratio <= config[:critical_ratio]
+        critical failure_message
       else
-        critical "#{ping_type} ping unsuccessful for host: #{config[:host]}"
+        warning failure_message
       end
     end
   end
