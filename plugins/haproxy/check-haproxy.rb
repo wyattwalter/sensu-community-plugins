@@ -69,6 +69,16 @@ class CheckHAProxy < Sensu::Plugin::Check::CLI
     :default => 90,
     :proc => proc {|a| a.to_i },
     :description => "Session Limit Critical Percent, default: 90"
+  option :queue_crit_percent,
+    :short => '-Q PERCENT',
+    :boolean => true,
+    :proc => proc {|a| a.to_i },
+    :description => "Queue Size Critical Percent"
+  option :queue_warn_percent,
+    :short => '-q PERCENT',
+    :boolean => true,
+    :proc => proc {|a| a.to_i },
+    :description => "Queue Size Warning Percent"
   option :all_services,
     :short => '-A',
     :boolean => true,
@@ -103,17 +113,23 @@ class CheckHAProxy < Sensu::Plugin::Check::CLI
       percent_up = 100 * services.select {|svc| svc[:status] == 'UP' || svc[:status] == 'OPEN' }.size / services.size
       failed_names = services.reject {|svc| svc[:status] == 'UP' || svc[:status] == 'OPEN' }.map {|svc| svc[:svname] }
       critical_sessions = services.select{ |svc| svc[:slim].to_i > 0 && (100 * svc[:scur].to_f / svc[:slim].to_f) > config[:session_crit_percent] }
-      warning_sessions = services.select{ |svc| svc[:slim].to_i > 0 && (100 * svc[:scur].to_f / svc[:slim].to_f) > config[:session_warn_percent] }
+      warning_sessions  = services.select{ |svc| svc[:slim].to_i > 0 && (100 * svc[:scur].to_f / svc[:slim].to_f) > config[:session_warn_percent] }
+      critical_queue    = services.select{ |svc| svc[:qlimit].to_i > 0 && (100 * svc[:qcur].to_f / svc[:qlimit].to_f) > config[:queue_crit_percent] }
+      warning_queue     = services.select{ |svc| svc[:qlimit].to_i > 0 && (100 * svc[:qcur].to_f / svc[:qlimit].to_f) > config[:queue_warn_percent] }
 
       status = "UP: #{percent_up}% of #{services.size} /#{config[:service]}/ services" + (failed_names.empty? ? "" : ", DOWN: #{failed_names.join(', ')}")
       if percent_up < config[:crit_percent]
         critical status
       elsif !critical_sessions.empty?
         critical status + "; Active sessions critical: " + critical_sessions.map{|s| "#{s[:scur]} #{s[:svname]}"}.join(', ')
+      elsif !critical_queue.empty?
+        critical status + "; Queue size critical: " + critical_queue.map{|s| "#{s[:qcur]} #{s[:svname]}"}.join(', ')
       elsif percent_up < config[:warn_percent]
         warning status
       elsif !warning_sessions.empty?
         warning status + "; Active sessions warning: " + warning_sessions.map{|s| "#{s[:scur]} #{s[:svname]}"}.join(', ')
+      elsif !warning_queue.empty?
+        warning status + "; Queue size warning: " + warning_queue.map{|s| "#{s[:qcur]} #{s[:svname]}"}.join(', ')
       else
         ok status
       end
